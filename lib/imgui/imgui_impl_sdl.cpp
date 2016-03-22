@@ -148,6 +148,7 @@ bool ImGui_ImplSdl_CreateDeviceObjects()
 {
     // Build texture atlas
     ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/Roboto-Bold.ttf", 24.0f);
     unsigned char* pixels;
     int width, height;
     io.Fonts->GetTexDataAsAlpha8(&pixels, &width, &height);

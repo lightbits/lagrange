@@ -2,11 +2,11 @@
 * Highscore tracking
 * Highscore display
 * Store email and name
-* Victory polish
 */
 
 #include "platform.h"
 #include <cstdio>
+#define array_count(list) (sizeof((list))/sizeof((list)[0]))
 #define IFKEYDOWN(KEY) if (input.key.down[SDL_SCANCODE_##KEY])
 #define IFKEYUP(KEY) if (input.key.released[SDL_SCANCODE_##KEY])
 #ifndef TWO_PI
@@ -16,34 +16,6 @@
                   (r32)(((HEX) >> 16) & 0xff) / 255.0f, \
                   (r32)(((HEX) >>  8) & 0xff) / 255.0f, \
                   (r32)(((HEX) >>  0) & 0xff) / 255.0f
-
-struct Font
-{
-    GLuint texture;
-    stbtt_bakedchar cdata[96]; // ASCII 32..126 is 95 glyphs
-} font;
-
-void pxPrint(r32 x, r32 y, char *text)
-{
-    // assume orthographic projection with units = screen pixels, origin at top left
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, font.texture);
-    glBegin(GL_QUADS);
-    while (*text) {
-      if (*text >= 32 && *text < 128) {
-         stbtt_aligned_quad q;
-         stbtt_GetBakedQuad(font.cdata, 512,512, *text-32, &x,&y,&q,1);
-         glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-         glTexCoord2f(q.s0,q.t0); glVertex2f(q.x0,q.y0);
-         glTexCoord2f(q.s1,q.t0); glVertex2f(q.x1,q.y0);
-         glTexCoord2f(q.s1,q.t1); glVertex2f(q.x1,q.y1);
-         glTexCoord2f(q.s0,q.t1); glVertex2f(q.x0,q.y1);
-      }
-      ++text;
-    }
-    glEnd();
-    glDisable(GL_TEXTURE_2D);
-}
 
 struct Player
 {
@@ -96,7 +68,26 @@ struct Roomba
 struct Highscore
 {
     int points;
+    char nickname[256];
+    char email[256];
 } highscore;
+
+struct HighscoreList
+{
+    int count;
+    Highscore highscores[4096];
+} highscore_list;
+
+enum GameState
+{
+    GAME_PLAY,
+    GAME_HIGHSCORE
+};
+
+struct Game
+{
+    GameState state;
+} game;
 
 enum TimerState
 {
@@ -122,7 +113,8 @@ struct Timer
 #define TIMER_AUTOTURN timers[4]
 #define TIMER_ROOMBA_LOSE timers[5]
 #define TIMER_ROOMBA_WIN timers[6]
-#define NUM_TIMERS 7
+#define TIMER_PLAYER_TIME timers[7]
+#define NUM_TIMERS 8
 Timer timers[NUM_TIMERS];
 
 #define ON_TIMER_SUCCESS(TIMER) if (TIMER.state == TIMER_SUCCESS)
@@ -148,7 +140,6 @@ struct World
     r32 red_line;
     r32 g;
 
-    // camera
     r32 right;
     r32 left;
     r32 top;
@@ -162,8 +153,31 @@ r32 compute_hover_voltage()
 
 void game_init()
 {
+    // load highscore list
+    {
+        FILE *file = fopen("gamedata.dat", "rb+");
+        if (file)
+        {
+            size_t read = fread(&highscore_list, 1, sizeof(highscore_list), file);
+            if (read == sizeof(highscore_list))
+            {
+                printf("Highscores: %d\n", highscore_list.count);
+                for (int i = 0; i < highscore_list.count; i++)
+                {
+                    Highscore h = highscore_list.highscores[i];
+                    printf("%d: %s (%s)\n", h.points, h.nickname, h.email);
+                }
+            }
+            else
+            {
+                highscore_list.count = 0;
+            }
+            fclose(file);
+        }
+    }
     {
         highscore.points = 0;
+        game.state = GAME_PLAY;
     }
     {
         init_timer(&TIMER_GREEN_LINE_CAPTURE, 2.0f);
@@ -173,7 +187,9 @@ void game_init()
         init_timer(&TIMER_AUTOTURN, 6.0f, true);
         init_timer(&TIMER_ROOMBA_LOSE, 0.5f);
         init_timer(&TIMER_ROOMBA_WIN, 0.5f);
+        init_timer(&TIMER_PLAYER_TIME, 1.0f);
         START_TIMER(TIMER_AUTOTURN);
+        START_TIMER(TIMER_PLAYER_TIME);
     }
     {
         world.floor_level = 0.0f;
@@ -221,23 +237,6 @@ void game_init()
         roomba.x = 0.0f;
         roomba.direction = -1.0f;
     }
-    #if 0
-    {
-        u08 *ttf_buffer = so_read_file_and_null_terminate("C:/Windows/Fonts/Arial.ttf");
-        u08 bitmap_buffer[512*512];
-        if (ttf_buffer)
-        {
-            stbtt_BakeFontBitmap(ttf_buffer,0, 64.0,bitmap_buffer,512,512, 32,96, font.cdata); // no guarantee this fits!
-            // can free ttf_buffer at this point
-            glGenTextures(1, &font.texture);
-            glBindTexture(GL_TEXTURE_2D, font.texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 512,512, 0, GL_ALPHA, GL_UNSIGNED_BYTE, bitmap_buffer);
-            // can free temp_bitmap at this point
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        }
-        so_free(ttf_buffer);
-    }
-    #endif
 }
 
 r32 voltage_to_force_magnitude(r32 voltage)
@@ -267,6 +266,21 @@ void glCircle(vec2 center, r32 radius, r32 t_max = TWO_PI, int n = 64)
         if (should_break)
             break;
     }
+}
+
+void glColor4x(u32 hex)
+{
+    glColor4f(XRGB(hex));
+}
+
+void glQuad(r32 x0, r32 y0, r32 x1, r32 y1)
+{
+    glVertex2f(x0, y0);
+    glVertex2f(x1, y0);
+    glVertex2f(x1, y1);
+    glVertex2f(x1, y1);
+    glVertex2f(x0, y1);
+    glVertex2f(x0, y0);
 }
 
 void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
@@ -305,9 +319,18 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         }
     }
 
+    ON_TIMER_SUCCESS(TIMER_PLAYER_TIME)
+    {
+        // TODO: transition
+        game.state = GAME_HIGHSCORE;
+        strcpy(highscore.nickname, "Nickname");
+        strcpy(highscore.email, "YourEmail@ProbablyGmail.com");
+    }
+
     // update
     {
         // key input
+        if (game.state == GAME_PLAY)
         {
             r32 hover_voltage = compute_hover_voltage();
             r32 dl = 0.0f;
@@ -462,21 +485,6 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
 
             Dposition += DDposition*delta_time;
             position += Dposition*delta_time;
-            // static r32 radius = 2.0f;
-            // static r32 Dradius = 0.0f;
-            // r32 Rradius = 2.0f;
-            // {
-            //     r32 distance = m_length(pendulum.position-m_vec2(roomba.x, roomba.y+roomba.dy1));
-            //     r32 distance0 = 0.05f;
-            //     r32 distance1 = 2.0f;
-            //     Rradius = 1.8f + (2.2f-1.8f)*(distance-distance0)/(distance1-distance0);
-            // }
-
-            // {
-            //     r32 DDradius = 10.0f*(Rradius-radius)-2.0f*Dradius;
-            //     Dradius += DDradius*delta_time;
-            //     radius += Dradius*delta_time;
-            // }
             r32 radius = 3.0f;
 
             world.right = (mode.width / (r32)mode.height)*(position.x+radius);
@@ -529,7 +537,8 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
                 ON_TIMER_SUCCESS(TIMER_RED_LINE_CAPTURE)
                 {
                     START_TIMER(TIMER_ROOMBA_LOSE);
-                    highscore.points--;
+                    if (game.state == GAME_PLAY)
+                        highscore.points--;
                 }
 
                 DURING_TIMER(TIMER_ROOMBA_LOSE)
@@ -565,7 +574,8 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
                 ON_TIMER_SUCCESS(TIMER_GREEN_LINE_CAPTURE)
                 {
                     START_TIMER(TIMER_ROOMBA_WIN);
-                    highscore.points++;
+                    if (game.state == GAME_PLAY)
+                        highscore.points++;
                 }
 
                 DURING_TIMER(TIMER_ROOMBA_WIN)
@@ -860,38 +870,141 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
 
-        #if 0
+        DURING_TIMER(TIMER_PLAYER_TIME)
         {
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            {
-                r32 Ax = +2.0f / mode.width;
-                r32 Bx = -1.0f;
-                r32 Ay = -2.0f / mode.height;
-                r32 By = +1.0f;
-                r32 data[] = {
-                    Ax,   0.0f, 0.0f, 0.0f,
-                    0.0f, Ay,   0.0f, 0.0f,
-                    0.0f, 0.0f, 1.0f, 0.0f,
-                    Bx,   By,   0.0f, 1.0f
-                };
-                glLoadMatrixf(data);
-            }
-
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            pxPrint(100.0f, 200.0f, "You!");
-            glDisable(GL_BLEND);
+            glBegin(GL_TRIANGLES);
+            glColor4f(XRGB(0xE03C28FF));
+            r32 x0 = -1.0f;
+            r32 x1 = 1.0f-2.0f*TIMER_PROGRESS(TIMER_PLAYER_TIME);
+            glVertex2f(x0, +0.95f);
+            glVertex2f(x1, +0.95f);
+            glVertex2f(x1, +1.00f);
+            glVertex2f(x1, +1.00f);
+            glVertex2f(x0, +1.00f);
+            glVertex2f(x0, +0.95f);
+            glEnd();
         }
-        #endif
 
         {
             using namespace ImGui;
+            if (Button("Increase"))
+            {
+                highscore.points++;
+            }
+            if (Button("Decrease"))
+            {
+                highscore.points--;
+            }
             if (Button("Reset"))
             {
                 game_init();
             }
             Text("Highscore: %d", highscore.points);
+        }
+
+        // highscore screen
+        if (game.state == GAME_HIGHSCORE)
+        {
+            glBegin(GL_TRIANGLES);
+            glColor4x(0x22090955);
+            glQuad(-1.0f, -1.0f, +1.0f, +1.0f);
+            glEnd();
+            using namespace ImGui;
+            PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+            PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 16.0f));
+            PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+            SetNextWindowPosCenter();
+            SetNextWindowSize(ImVec2(500.0f, 200.0f));
+            Begin("Enter your details!", NULL,
+                  ImGuiWindowFlags_NoTitleBar|
+                  ImGuiWindowFlags_NoResize);
+            PushItemWidth(450.0f);
+            InputText("##Nickname", highscore.nickname, sizeof(highscore.nickname));
+            InputText("##E-mail", highscore.email, sizeof(highscore.email));
+            PopItemWidth();
+            if (Button("Save and try again"))
+            {
+                if (highscore_list.count < array_count(highscore_list.highscores))
+                {
+                    highscore_list.highscores[highscore_list.count] = highscore;
+                    highscore_list.count++;
+                }
+                {
+                    FILE *file = fopen("gamedata.dat", "wb+");
+                    if (file)
+                    {
+                        fwrite(&highscore_list, 1, sizeof(highscore_list), file);
+                        fclose(file);
+                    }
+                }
+                {
+                    FILE *file = fopen("highscores.txt", "w+");
+                    if (file)
+                    {
+                        for (int i = 0; i < highscore_list.count; i++)
+                        {
+                            Highscore h = highscore_list.highscores[i];
+                            fprintf(file, "%d points. %s (%s)\n", h.points, h.nickname, h.email);
+                        }
+                        fclose(file);
+                    }
+                }
+                game_init();
+            }
+            SameLine();
+            if (Button("Try again"))
+            {
+                game_init();
+            }
+            End();
+            PopStyleVar();
+            PopStyleVar();
+            PopStyleVar();
+
+            // draw histogram
+            {
+                int bins[8];
+                int max_count = 0;
+                for (int i = 0; i < array_count(bins); i++)
+                {
+                    bins[i] = 0;
+                }
+                for (int i = 0; i < highscore_list.count; i++)
+                {
+                    int points = highscore_list.highscores[i].points;
+                    int bin = points+array_count(bins)/2;
+                    if (bin < 0) bin = 0;
+                    if (bin > array_count(bins)-1) bin = array_count(bins)-1;
+                    bins[bin]++;
+                    if (bins[bin] > max_count)
+                        max_count = bins[bin];
+                }
+                glBegin(GL_TRIANGLES);
+                r32 w = 0.8f;
+                r32 wi = 0.2f * w / array_count(bins);
+                for (int i = 0; i < array_count(bins); i++)
+                {
+                    int count = bins[i];
+                    r32 x = -w/2.0f + w*i/(r32)array_count(bins);
+                    r32 x0 = x-0.5f*wi;
+                    r32 x1 = x+0.5f*wi;
+                    r32 y0 = 0.5f;
+                    r32 y1 = 0.5f+0.4f*count/(r32)max_count;
+                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
+                    glQuad(x0, y0, x1, y1);
+                }
+                {
+                    int my_bin = highscore.points+array_count(bins)/2;
+                    if (my_bin < 0) my_bin = 0;
+                    if (my_bin > array_count(bins)-1) my_bin = array_count(bins)-1;
+                    r32 x = -w/2.0f + w*my_bin/(r32)array_count(bins);
+                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
+                    glVertex2f(x-wi, 0.40f);
+                    glVertex2f(x+wi, 0.40f);
+                    glVertex2f(x, 0.45f);
+                }
+                glEnd();
+            }
         }
     }
     // end render
