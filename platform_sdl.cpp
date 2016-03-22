@@ -211,7 +211,7 @@ int main(int argc, char *argv[])
         input.mouse.ndc.x = -1.0f + 2.0f * input.mouse.pos.x / (r32)mode.width;
         input.mouse.ndc.y = +1.0f - 2.0f * input.mouse.pos.y / (r32)mode.height;
         ImGui_ImplSdl_NewFrame(window);
-        game_tick(input, mode, elapsed_time, delta_time);
+        game_tick(input, mode, elapsed_time, 1.0f/60.0f);
         ImGui::Render();
         SDL_GL_SwapWindow(window);
 

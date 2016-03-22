@@ -1019,7 +1019,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 16.0f));
             PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
             SetNextWindowPosCenter();
-            SetNextWindowSize(ImVec2(500.0f, 200.0f));
+            SetNextWindowSize(ImVec2(500.0f, 265.0f));
             Begin("Enter your details!", NULL,
                   ImGuiWindowFlags_NoTitleBar|
                   ImGuiWindowFlags_NoResize);

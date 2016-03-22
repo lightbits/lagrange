@@ -1,6 +1,7 @@
 #pragma once
 #include "SDL_opengl.h"
 #include "SDL.h"
+#define IM_ASSERT
 #include "lib/imgui/imgui.h"
 #include "lib/imgui/stb_truetype.h"
 #include "lib/imgui/stb_rect_pack.h"
@@ -71,41 +72,3 @@ struct Input
         } wheel;
     } mouse;
 };
-
-u08 *so_read_file_and_null_terminate(char *filename)
-{
-    SDL_RWops *rw = SDL_RWFromFile(filename, "rb");
-    if (!rw)
-    {
-        // Failed to open file
-        assert(false);
-        return NULL;
-    }
-
-    s64 size_in_bytes = SDL_RWsize(rw);
-
-    // Allocate + 1 for null terminator
-    u08 *buffer = (u08*)malloc(size_in_bytes + 1);
-
-    s64 bytes_read = 0;
-    while (bytes_read < size_in_bytes)
-    {
-        u08 *position = buffer + bytes_read;
-        s64 remaining = size_in_bytes - bytes_read;
-        bytes_read += SDL_RWread(rw, position, 1, remaining);
-    }
-    SDL_RWclose(rw);
-    if (bytes_read != size_in_bytes)
-    {
-        // Failed to read entire file
-        assert(false);
-        return NULL;
-    }
-    buffer[bytes_read] = 0;
-    return buffer;
-}
-
-void so_free(u08 *data)
-{
-    free(data);
-}
