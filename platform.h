@@ -5,6 +5,8 @@
 #include "lib/imgui/stb_truetype.h"
 #include "lib/imgui/stb_rect_pack.h"
 #include "lib/so_math.h"
+#define SO_NOISE_IMPLEMENTATION
+#include "lib/so_noise.h"
 #include <stdint.h>
 typedef float       r32;
 typedef uint64_t    u64;

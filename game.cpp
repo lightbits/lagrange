@@ -79,6 +79,17 @@ enum GameState
     GAME_HIGHSCORE
 };
 
+#define NUM_PARTICLES 512
+struct Particles
+{
+    int inactive[NUM_PARTICLES];
+    int num_inactive;
+    bool active[NUM_PARTICLES];
+    vec2 position[NUM_PARTICLES];
+    vec2 velocity[NUM_PARTICLES];
+    r32 alpha[NUM_PARTICLES];
+} particles;
+
 struct Game
 {
     GameState state;
@@ -146,8 +157,29 @@ r32 compute_hover_voltage()
     return sqrt(0.5f*(player.mass+pendulum.mass)*world.g/player.motor_constant);
 }
 
+void spawn_particle(vec2 p0, vec2 v0)
+{
+    if (particles.num_inactive > 0)
+    {
+        particles.num_inactive--;
+        int index = particles.inactive[particles.num_inactive];
+        particles.active[index] = true;
+        particles.position[index] = p0;
+        particles.velocity[index] = v0;
+        particles.alpha[index] = 1.0f;
+    }
+}
+
 void game_init()
 {
+    {
+        particles.num_inactive = NUM_PARTICLES;
+        for (int i = 0; i < NUM_PARTICLES; i++)
+        {
+            particles.inactive[i] = i;
+            particles.active[i] = false;
+        }
+    }
     // load highscore list
     {
         FILE *file = fopen("gamedata.dat", "rb+");
@@ -173,7 +205,7 @@ void game_init()
         init_timer(&TIMER_AUTOTURN, 8.5f, true);
         init_timer(&TIMER_ROOMBA_LOSE, 0.5f);
         init_timer(&TIMER_ROOMBA_WIN, 0.5f);
-        init_timer(&TIMER_PLAYER_TIME, 1.0f);
+        init_timer(&TIMER_PLAYER_TIME, 60.0f);
         START_TIMER(TIMER_AUTOTURN);
         START_TIMER(TIMER_PLAYER_TIME);
     }
@@ -271,6 +303,7 @@ void glQuad(r32 x0, r32 y0, r32 x1, r32 y1)
 
 void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
 {
+    // update timers
     {
         for (int i = 0; i < NUM_TIMERS; i++)
         {
@@ -307,13 +340,12 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
 
     ON_TIMER_SUCCESS(TIMER_PLAYER_TIME)
     {
-        // TODO: transition
         game.state = GAME_HIGHSCORE;
         strcpy(highscore.nickname, "Nickname");
         strcpy(highscore.email, "YourEmail@ProbablyGmail.com");
     }
 
-    // update
+    // update game
     {
         // key input
         if (game.state == GAME_PLAY)
@@ -584,6 +616,69 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
     }
     // end update
 
+    // spawn particles
+    #ifdef PARTICLES
+    {
+        vec2 tangent = m_vec2(cos(player.theta), sin(player.theta));
+        vec2 normal = m_vec2(-tangent.y, tangent.x);
+        vec2 right_wing = player.position + 0.8f*player.arm*tangent;
+        vec2 left_wing = player.position - 0.8f*player.arm*tangent;
+
+        bool left = false;
+        bool right = false;
+        IFKEYDOWN(RIGHT) right = true;
+        IFKEYDOWN(LEFT) left = true;
+        IFKEYDOWN(UP) { right = true; left = true; }
+        if (left)
+        {
+            r32 v1 = 0.3f+0.3f*frand();
+            r32 v2 = -0.3f+0.6f*frand();
+            spawn_particle(left_wing, -v1*normal+v2*tangent);
+        }
+        if (right)
+        {
+            r32 v1 = 0.3f+0.3f*frand();
+            r32 v2 = -0.3f+0.6f*frand();
+            spawn_particle(right_wing, -v1*normal+v2*tangent);
+        }
+    }
+    #endif
+
+    // update particles
+    #ifdef PARTICLES
+    {
+        for (int i = 0; i < NUM_PARTICLES; i++)
+        {
+            bool active = particles.active[i];
+            if (active)
+            {
+                r32 alpha = particles.alpha[i];
+                vec2 p = particles.position[i];
+                vec2 v = particles.velocity[i];
+                v.y -= 0.1f*world.g*delta_time;
+                p += v*delta_time;
+                if (p.y < world.floor_level)
+                {
+                    p.y = world.floor_level;
+                    v.y *= -0.95f;
+                }
+                alpha -= delta_time;
+
+                if (alpha < 0.0f)
+                {
+                    particles.active[i] = false;
+                    particles.inactive[particles.num_inactive] = i;
+                    particles.num_inactive++;
+                }
+
+                particles.position[i] = p;
+                particles.velocity[i] = v;
+                particles.alpha[i] = alpha;
+            }
+        }
+    }
+    #endif
+
     glViewport(0, 0, mode.width, mode.height);
     glClearColor(XRGB(0xE2D7B5FF));
     glClear(GL_COLOR_BUFFER_BIT);
@@ -736,6 +831,24 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             glEnd();
         }
 
+        // draw particles
+        #ifdef PARTICLES
+        {
+            glBegin(GL_TRIANGLES);
+            for (int i = 0; i < NUM_PARTICLES; i++)
+            {
+                if (particles.active[i])
+                {
+                    vec2 p = particles.position[i];
+                    r32 alpha = particles.alpha[i];
+                    glColor4f(0.0f, 0.0f, 0.0f, 0.5f*alpha);
+                    glCircle(p, 0.02f, TWO_PI, 16);
+                }
+            }
+            glEnd();
+        }
+        #endif
+
         // draw magnet timer
         DURING_TIMER(TIMER_MAGNET)
         {
@@ -873,7 +986,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             glEnd();
         }
 
-        #if DEBUG
+        #ifdef DEBUG
         {
             using namespace ImGui;
             if (Button("Increase"))
@@ -889,8 +1002,10 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
                 game_init();
             }
             Text("Highscore: %d", highscore.points);
+            Text("Particles: %d\n", particles.num_inactive);
         }
         #endif
+
 
         // highscore screen
         if (game.state == GAME_HIGHSCORE)
