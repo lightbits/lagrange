@@ -1,11 +1,6 @@
-/* TODO:
-* Highscore tracking
-* Highscore display
-* Store email and name
-*/
-
 #include "platform.h"
 #include <cstdio>
+// #define DEBUG
 #define array_count(list) (sizeof((list))/sizeof((list)[0]))
 #define IFKEYDOWN(KEY) if (input.key.down[SDL_SCANCODE_##KEY])
 #define IFKEYUP(KEY) if (input.key.released[SDL_SCANCODE_##KEY])
@@ -158,17 +153,8 @@ void game_init()
         FILE *file = fopen("gamedata.dat", "rb+");
         if (file)
         {
-            size_t read = fread(&highscore_list, 1, sizeof(highscore_list), file);
-            if (read == sizeof(highscore_list))
-            {
-                printf("Highscores: %d\n", highscore_list.count);
-                for (int i = 0; i < highscore_list.count; i++)
-                {
-                    Highscore h = highscore_list.highscores[i];
-                    printf("%d: %s (%s)\n", h.points, h.nickname, h.email);
-                }
-            }
-            else
+            size_t read_bytes = fread(&highscore_list, 1, sizeof(highscore_list), file);
+            if (read_bytes != sizeof(highscore_list))
             {
                 highscore_list.count = 0;
             }
@@ -182,9 +168,9 @@ void game_init()
     {
         init_timer(&TIMER_GREEN_LINE_CAPTURE, 2.0f);
         init_timer(&TIMER_RED_LINE_CAPTURE, 2.0f);
-        init_timer(&TIMER_MAGNET, 0.3f);
+        init_timer(&TIMER_MAGNET, 0.45f);
         init_timer(&TIMER_MAGNET_CELEBRATION, 0.5f);
-        init_timer(&TIMER_AUTOTURN, 6.0f, true);
+        init_timer(&TIMER_AUTOTURN, 8.5f, true);
         init_timer(&TIMER_ROOMBA_LOSE, 0.5f);
         init_timer(&TIMER_ROOMBA_WIN, 0.5f);
         init_timer(&TIMER_PLAYER_TIME, 1.0f);
@@ -503,7 +489,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             roomba.direction += 5.0f*(roomba.Rdirection-roomba.direction)*delta_time;
 
             if (m_abs(pendulum.position.x-roomba.x) < roomba.radius &&
-                pendulum.position.y-pendulum.radius > roomba.y+roomba.dy1 &&
+                pendulum.position.y > roomba.y+roomba.dy1 &&
                 pendulum.position.y-pendulum.radius < roomba.y+roomba.dy2)
             {
                 if (TIMER_MAGNET_CELEBRATION.state != TIMER_ACTIVE)
@@ -809,6 +795,8 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         // TODO: better win anim
         DURING_TIMER(TIMER_ROOMBA_WIN)
         {
+            TIMER_PLAYER_TIME.t += 16.0f*delta_time;
+
             static vec2 center = m_vec2(0.0f, 0.0f);
             ON_TIMER_BEGIN(TIMER_ROOMBA_WIN)
             {
@@ -885,6 +873,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             glEnd();
         }
 
+        #if DEBUG
         {
             using namespace ImGui;
             if (Button("Increase"))
@@ -901,6 +890,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             }
             Text("Highscore: %d", highscore.points);
         }
+        #endif
 
         // highscore screen
         if (game.state == GAME_HIGHSCORE)
@@ -960,51 +950,57 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             PopStyleVar();
             PopStyleVar();
             PopStyleVar();
+        }
 
-            // draw histogram
+        // draw histogram
+        {
+            int bins[8];
+            int max_count = 0;
+            for (int i = 0; i < array_count(bins); i++)
             {
-                int bins[8];
-                int max_count = 0;
-                for (int i = 0; i < array_count(bins); i++)
-                {
-                    bins[i] = 0;
-                }
-                for (int i = 0; i < highscore_list.count; i++)
-                {
-                    int points = highscore_list.highscores[i].points;
-                    int bin = points+array_count(bins)/2;
-                    if (bin < 0) bin = 0;
-                    if (bin > array_count(bins)-1) bin = array_count(bins)-1;
-                    bins[bin]++;
-                    if (bins[bin] > max_count)
-                        max_count = bins[bin];
-                }
-                glBegin(GL_TRIANGLES);
-                r32 w = 0.8f;
-                r32 wi = 0.2f * w / array_count(bins);
-                for (int i = 0; i < array_count(bins); i++)
-                {
-                    int count = bins[i];
-                    r32 x = -w/2.0f + w*i/(r32)array_count(bins);
-                    r32 x0 = x-0.5f*wi;
-                    r32 x1 = x+0.5f*wi;
-                    r32 y0 = 0.5f;
-                    r32 y1 = 0.5f+0.4f*count/(r32)max_count;
-                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
-                    glQuad(x0, y0, x1, y1);
-                }
-                {
-                    int my_bin = highscore.points+array_count(bins)/2;
-                    if (my_bin < 0) my_bin = 0;
-                    if (my_bin > array_count(bins)-1) my_bin = array_count(bins)-1;
-                    r32 x = -w/2.0f + w*my_bin/(r32)array_count(bins);
-                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
-                    glVertex2f(x-wi, 0.40f);
-                    glVertex2f(x+wi, 0.40f);
-                    glVertex2f(x, 0.45f);
-                }
-                glEnd();
+                bins[i] = 0;
             }
+            for (int i = 0; i < highscore_list.count; i++)
+            {
+                int points = highscore_list.highscores[i].points;
+                int bin = points+array_count(bins)/2;
+                if (bin < 0) bin = 0;
+                if (bin > array_count(bins)-1) bin = array_count(bins)-1;
+                bins[bin]++;
+                if (bins[bin] > max_count)
+                    max_count = bins[bin];
+            }
+            glBegin(GL_TRIANGLES);
+            r32 w = 0.8f;
+            r32 wi = 0.2f * w / array_count(bins);
+            for (int i = 0; i < array_count(bins); i++)
+            {
+                int count = bins[i];
+                r32 x = -w/2.0f + w*i/(r32)array_count(bins);
+                r32 x0 = x-0.5f*wi;
+                r32 x1 = x+0.5f*wi;
+                r32 y0 = 0.5f;
+                r32 y1 = 0.5f+0.4f*count/(r32)max_count;
+                if (game.state == GAME_PLAY)
+                    glColor4x(0x1a1a1a22);
+                else
+                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
+                glQuad(x0, y0, x1, y1);
+            }
+            {
+                int my_bin = highscore.points+array_count(bins)/2;
+                if (my_bin < 0) my_bin = 0;
+                if (my_bin > array_count(bins)-1) my_bin = array_count(bins)-1;
+                r32 x = -w/2.0f + w*my_bin/(r32)array_count(bins);
+                if (game.state == GAME_PLAY)
+                    glColor4x(0x1a1a1a55);
+                else
+                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
+                glVertex2f(x-wi, 0.40f);
+                glVertex2f(x+wi, 0.40f);
+                glVertex2f(x, 0.45f);
+            }
+            glEnd();
         }
     }
     // end render
