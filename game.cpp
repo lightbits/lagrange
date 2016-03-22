@@ -91,24 +91,46 @@ struct Roomba
     r32 speed;
 } roomba;
 
-struct Animations
+enum TimerState
 {
-    struct MagnetTimer
-    {
-        r32 prev_progress;
-        r32 progress;
-    } magnet_timer;
+    TIMER_INACTIVE = 0,
+    TIMER_BEGIN = 1,
+    TIMER_ACTIVE = 2,
+    TIMER_SUCCESS = 3,
+    TIMER_ABORTED = 4
+};
 
-    struct MagnetBroken
-    {
-        r32 progress;
-    };
+struct Timer
+{
+    TimerState state;
+    r32 t;
+    r32 duration;
+    bool repeat;
+};
 
-    struct MagnetSuccess
-    {
-        r32 progress;
-    };
-} anims;
+#define TIMER_RED_LINE_CAPTURE timers[0]
+#define TIMER_GREEN_LINE_CAPTURE timers[1]
+#define TIMER_MAGNET timers[2]
+#define TIMER_MAGNET_CELEBRATION timers[3]
+#define TIMER_AUTOTURN timers[4]
+#define NUM_TIMERS 5
+Timer timers[NUM_TIMERS];
+
+#define ON_TIMER_SUCCESS(TIMER) if (TIMER.state == TIMER_SUCCESS)
+#define ON_TIMER_ABORTED(TIMER) if (TIMER.state == TIMER_ABORTED)
+#define ON_TIMER_BEGIN(TIMER) if (TIMER.state == TIMER_BEGIN)
+#define DURING_TIMER(TIMER) if (TIMER.state == TIMER_ACTIVE || TIMER.state == TIMER_BEGIN)
+#define TIMER_PROGRESS(TIMER) (TIMER.t/TIMER.duration)
+#define START_TIMER(TIMER) if (TIMER.state == TIMER_INACTIVE) { TIMER.state = TIMER_BEGIN; TIMER.t = TIMER.duration; }
+#define ABORT_TIMER(TIMER) if (TIMER.state == TIMER_ACTIVE) TIMER.state = TIMER_ABORTED;
+
+void init_timer(Timer *timer, r32 duration, bool repeat = false)
+{
+    timer->state = TIMER_INACTIVE;
+    timer->t = 0.0f;
+    timer->duration = duration;
+    timer->repeat = repeat;
+}
 
 struct World
 {
@@ -140,6 +162,14 @@ void game_init()
         px.color = m_vec4(1.0f, 1.0f, 1.0f, 1.0f);
     }
     {
+        init_timer(&TIMER_GREEN_LINE_CAPTURE, 1.0f);
+        init_timer(&TIMER_RED_LINE_CAPTURE, 1.0f);
+        init_timer(&TIMER_MAGNET, 0.5f);
+        init_timer(&TIMER_MAGNET_CELEBRATION, 0.5f);
+        init_timer(&TIMER_AUTOTURN, 10.0f, true);
+        START_TIMER(TIMER_AUTOTURN);
+    }
+    {
         world.floor_level = 0.0f;
         world.green_line = 2.0f;
         world.red_line = -2.0f;
@@ -166,14 +196,11 @@ void game_init()
         player.r_motor = player.l_motor;
 
         roomba.radius = 0.5f;
-        roomba.turn_timer0 = 10.0f;
         roomba.speed = 0.33f;
         roomba.Rdirection = -1.0f;
         roomba.y0 = world.floor_level+0.1f;
         roomba.y1 = world.floor_level+0.3f;
         roomba.y2 = world.floor_level+0.6f;
-
-        roomba.activate_timer0 = 1.0f;
     }
     {
         player.theta = 0.0f;
@@ -186,8 +213,6 @@ void game_init()
 
         roomba.x = 0.0f;
         roomba.direction = -1.0f;
-        roomba.turn_timer = roomba.turn_timer0;
-        roomba.activate_timer = roomba.activate_timer0;
     }
     #if 0
     {
@@ -248,7 +273,37 @@ void pxCircle(vec2 center, r32 radius, int n)
 void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
 {
     {
-        anims.magnet_timer.prev_progress = anims.magnet_timer.progress;
+        for (int i = 0; i < NUM_TIMERS; i++)
+        {
+            if (timers[i].state == TIMER_SUCCESS)
+            {
+                if (timers[i].repeat)
+                {
+                    timers[i].state = TIMER_BEGIN;
+                }
+                else
+                {
+                    timers[i].state = TIMER_INACTIVE;
+                }
+            }
+            if (timers[i].state == TIMER_ABORTED)
+            {
+                timers[i].state = TIMER_INACTIVE;
+            }
+            if (timers[i].state == TIMER_BEGIN)
+            {
+                timers[i].t = timers[i].duration;
+                timers[i].state = TIMER_ACTIVE;
+            }
+            if (timers[i].state == TIMER_ACTIVE)
+            {
+                timers[i].t -= delta_time;
+                if (timers[i].t < 0.0f)
+                {
+                    timers[i].state = TIMER_SUCCESS;
+                }
+            }
+        }
     }
 
     // update
@@ -424,40 +479,59 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         // update roomba
         {
             roomba.x += roomba.direction*roomba.speed*delta_time;
-            roomba.turn_timer -= delta_time;
-            if (roomba.turn_timer < 0.0f)
+            ON_TIMER_SUCCESS(TIMER_AUTOTURN)
             {
-                roomba.turn_timer = roomba.turn_timer0;
                 roomba.Rdirection *= -1.0f;
             }
             roomba.direction += 5.0f*(roomba.Rdirection-roomba.direction)*delta_time;
 
-            bool magnet_activated = false;
+            IFKEYDOWN(T)
+            {
+                if (TIMER_MAGNET_CELEBRATION.state != TIMER_ACTIVE)
+                {
+                    START_TIMER(TIMER_MAGNET);
+                }
+            }
+            IFKEYUP(T)
+            {
+                ABORT_TIMER(TIMER_MAGNET);
+            }
+
             if (m_abs(pendulum.position.x-roomba.x) < roomba.radius &&
                 pendulum.position.y > roomba.y1 &&
                 pendulum.position.y < roomba.y2)
             {
-                magnet_activated = true;
-            }
-
-            if (magnet_activated)
-            {
-                roomba.activate_timer -= delta_time;
-                anims.magnet_timer.progress = (roomba.activate_timer0-roomba.activate_timer)/roomba.activate_timer0;
+                if (TIMER_MAGNET_CELEBRATION.state != TIMER_ACTIVE)
+                {
+                    START_TIMER(TIMER_MAGNET);
+                }
             }
             else
             {
-                anims.magnet_timer.progress = -1.0f;
-                roomba.activate_timer = roomba.activate_timer0;
+                ABORT_TIMER(TIMER_MAGNET);
             }
 
-            if (roomba.activate_timer < 0.0f)
+            ON_TIMER_SUCCESS(TIMER_MAGNET)
             {
-                // todo: play celebratory animation
-                // START_ANIM(magnet_success);
+                START_TIMER(TIMER_MAGNET_CELEBRATION);
                 roomba.Rdirection *= -1.0f;
-                roomba.activate_timer = roomba.activate_timer0;
             }
+
+            // // Red field
+            // {
+            //     bool is_in_red = false;
+            //     if (roomba.x - roomba.radius < world.red_line)
+            //         is_in_red = true;
+            //     if (is_in_red)
+            //     {
+
+            //     }
+            // }
+
+            // // Green field
+            // {
+
+            // }
         }
     }
     // end update
@@ -607,11 +681,11 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         }
 
         // draw magnet timer
-        if (anims.magnet_timer.progress > -1.0f)
+        DURING_TIMER(TIMER_MAGNET)
         {
             glBegin(GL_TRIANGLES);
             glColor4f(XRGB(0xE03C28FF));
-            r32 t = anims.magnet_timer.progress*TWO_PI;
+            r32 t = TWO_PI*(1.0f-TIMER_PROGRESS(TIMER_MAGNET));
             r32 radius = 0.3f;
             vec2 center = m_vec2(roomba.x, roomba.y1+0.5f);
             int n = 64;
@@ -632,25 +706,49 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
             glEnd();
         }
 
-        if (anims.magnet_timer.progress < 0.0f &&
-            anims.magnet_timer.prev_progress > 1.0f)
+        DURING_TIMER(TIMER_MAGNET_CELEBRATION)
         {
-            // PLAY_ANIM(2.0f)
-            // {
-
-            // }
-            printf("success\n");
+            r32 t = 1.0f-TIMER_PROGRESS(TIMER_MAGNET_CELEBRATION);
+            r32 t0 = 2.0f*(t+0.1f)*(t+0.1f)*(t+0.1f);
+            r32 t1 = 0.2f+1.9f*t*t;
+            if (t0 > t1)
+                t0 = t1;
+            vec2 c = m_vec2(roomba.x, roomba.y1+0.5f);
+            static r32 thetas[] = {
+                0.1f, 0.7f, 1.4f, 1.6f,
+                2.6f, 3.5f, 4.5f, 5.5f
+            };
+            glBegin(GL_LINES);
+            for (int i = 0; i < 8; i++)
+            {
+                r32 theta = thetas[i];
+                r32 cost = cos(theta);
+                r32 sint = sin(theta);
+                glColor4f(XRGB(0x000000FF)); glVertex2f(c.x+t0*cost, c.y+t0*sint);
+                glColor4f(XRGB(0x000000FF)); glVertex2f(c.x+t1*cost, c.y+t1*sint);
+            }
+            glEnd();
         }
-        if (anims.magnet_timer.progress < 0.0f &&
-            anims.magnet_timer.prev_progress > 0.0f &&
-            anims.magnet_timer.prev_progress < 1.0f)
-        {
-            printf("broken\n");
-            // PLAY_ANIM(2.0f)
-            // {
 
-            // }
-        }
+        // if (anims.magnet_timer.progress < 0.0f &&
+        //     anims.magnet_timer.prev_progress > 1.0f)
+        // {
+        //     // PLAY_ANIM(2.0f)
+        //     // {
+
+        //     // }
+        //     printf("success\n");
+        // }
+        // if (anims.magnet_timer.progress < 0.0f &&
+        //     anims.magnet_timer.prev_progress > 0.0f &&
+        //     anims.magnet_timer.prev_progress < 1.0f)
+        // {
+        //     printf("broken\n");
+        //     // PLAY_ANIM(2.0f)
+        //     // {
+
+        //     // }
+        // }
     }
 
     // render gui
@@ -685,15 +783,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
 
         {
             using namespace ImGui;
-            Text("Left motor: %.2f\nRight motor: %.2f", player.l_motor, player.r_motor);
-
-            if (Button("Reset"))
-            {
-                game_init();
-            }
-
-            SliderFloat("Roomba direction", &roomba.Rdirection, -1.0f, +1.0f);
-            SliderFloat("Roomba timer", &roomba.activate_timer, 0.0f, roomba.activate_timer0);
+            Text("%.2f", TIMER_MAGNET.t);
         }
     }
     // end render
