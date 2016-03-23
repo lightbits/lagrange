@@ -1011,7 +1011,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         if (game.state == GAME_HIGHSCORE)
         {
             glBegin(GL_TRIANGLES);
-            glColor4x(0x22090955);
+            glColor4x(0xE2D7B555);
             glQuad(-1.0f, -1.0f, +1.0f, +1.0f);
             glEnd();
             using namespace ImGui;
@@ -1099,7 +1099,7 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
                 if (game.state == GAME_PLAY)
                     glColor4x(0x1a1a1a22);
                 else
-                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
+                    glColor4x(0xAB6666ff);
                 glQuad(x0, y0, x1, y1);
             }
             {
@@ -1108,9 +1108,9 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
                 if (my_bin > array_count(bins)-1) my_bin = array_count(bins)-1;
                 r32 x = -w/2.0f + w*my_bin/(r32)array_count(bins);
                 if (game.state == GAME_PLAY)
-                    glColor4x(0x1a1a1a55);
+                    glColor4x(0x1a1a1a22);
                 else
-                    glColor4f(1.0f, 0.98f, 0.3f, 1.0f);
+                    glColor4x(0xAB6666ff);
                 glVertex2f(x-wi, 0.40f);
                 glVertex2f(x+wi, 0.40f);
                 glVertex2f(x, 0.45f);
