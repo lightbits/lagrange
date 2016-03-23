@@ -483,18 +483,18 @@ void game_tick(Input input, VideoMode mode, r32 elapsed_time, r32 delta_time)
         {
             static vec2 position = m_vec2(0.0f, 0.0f);
             static vec2 Dposition = m_vec2(0.0f, 0.0f);
-            r32 k = 2.0f;
-            r32 d = 2.0f;
+            r32 k = 1.0f;
+            r32 d = 1.0f;
             vec2 reference = player.position;
             vec2 Dreference = player.Dposition;
-            if (player.position.x > world.green_line)
+            if (player.position.x > 0.3f*world.green_line)
             {
-                reference.x = 0.8f*world.green_line;
+                reference.x = 0.3f*world.green_line;
                 Dreference.x = 0.0f;
             }
-            if (player.position.x < world.red_line)
+            if (player.position.x < 0.3f*world.red_line)
             {
-                reference.x = 0.8f*world.red_line;
+                reference.x = 0.3f*world.red_line;
                 Dreference.x = 0.0f;
             }
             vec2 e = reference-position;
